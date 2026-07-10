@@ -2,7 +2,7 @@ const SibApiV3Sdk = require("@getbrevo/brevo");
 
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
-// ✅ Set the API key correctly
+// ✅ Correct way to set API key
 apiInstance.setApiKey(
   SibApiV3Sdk.TransactionalEmailsApiApiKeys.apiKey,
   process.env.BREVO_API_KEY,
