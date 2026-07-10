@@ -23,6 +23,7 @@ const app = express();
 // 1. Security Headers (Helps prevent XSS)
 app.use(helmet());
 app.use(cookieParser());
+app.set("trust proxy", 1);
 
 // 2. Rate Limiting (Prevents Brute Force on API endpoints)
 const limiter = rateLimit({

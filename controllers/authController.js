@@ -57,12 +57,20 @@ exports.register = async (req, res) => {
       .substring(2, 8)
       .toUpperCase();
     const verificationToken = crypto.randomBytes(32).toString("hex");
+    const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // ✅ 24 hours from now
 
-    // Insert user
+    // Insert user with verification token and expiry
     const [result] = await db.query(
-      `INSERT INTO users (name, email, password, referral_code, verification_token, is_verified)
-       VALUES (?, ?, ?, ?, ?, FALSE)`,
-      [name, email, hashedPassword, referralCode, verificationToken],
+      `INSERT INTO users (name, email, password, referral_code, verification_token, verification_token_expiry, is_verified)
+       VALUES (?, ?, ?, ?, ?, ?, FALSE)`,
+      [
+        name,
+        email,
+        hashedPassword,
+        referralCode,
+        verificationToken,
+        tokenExpiry,
+      ],
     );
     const userId = result.insertId;
 
@@ -174,7 +182,7 @@ exports.verifyEmail = async (req, res) => {
 
   try {
     const [rows] = await db.query(
-      "SELECT id FROM users WHERE verification_token = ? AND is_verified = FALSE",
+      "SELECT id FROM users WHERE verification_token = ? AND is_verified = FALSE AND verification_token_expiry > NOW()",
       [token],
     );
     if (rows.length === 0) {
@@ -270,6 +278,62 @@ exports.resetPassword = async (req, res) => {
     res.json({ message: "Password reset successful. You can now log in." });
   } catch (err) {
     console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.resendVerification = async (req, res) => {
+  const { email } = req.body;
+  try {
+    // 1. Check if user exists and is not verified
+    const [rows] = await db.query(
+      "SELECT id, name, email, is_verified FROM users WHERE email = ?",
+      [email],
+    );
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No account found with that email" });
+    }
+    const user = rows[0];
+    if (user.is_verified) {
+      return res
+        .status(400)
+        .json({ message: "This account is already verified. Please login." });
+    }
+
+    // 2. Generate new verification token (valid 24 hours)
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    // 3. Update token in database
+    await db.query(
+      "UPDATE users SET verification_token = ?, verification_token_expiry = ? WHERE id = ?",
+      [verificationToken, tokenExpiry, user.id],
+    );
+
+    // 4. Build verification link
+    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+
+    // 5. Send email
+    await sendEmail({
+      to: user.email,
+      subject: "Verify Your ApexMarkets Account",
+      html: `
+        <h2>Welcome to ApexMarkets!</h2>
+        <p>Hi ${user.name},</p>
+        <p>Please click the link below to verify your email address and activate your account:</p>
+        <a href="${verificationLink}" style="display:inline-block;padding:12px 24px;background:#8a2be2;color:#fff;text-decoration:none;border-radius:4px;">Verify Email</a>
+        <p>This link will expire in 24 hours.</p>
+        <p>If you didn't create this account, please ignore this email.</p>
+      `,
+    });
+
+    res.json({
+      message: "A new verification link has been sent to your email.",
+    });
+  } catch (err) {
+    console.error("Resend verification error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
