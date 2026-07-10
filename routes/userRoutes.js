@@ -21,6 +21,7 @@ const {
   changePassword,
   enable2FA,
   disable2FA,
+  generate2FASecret,
   logout,
 } = require("../controllers/userController");
 
@@ -53,9 +54,10 @@ router.get("/notifications", getNotifications);
 router.put("/notifications", updateNotifications);
 
 // --- 🛡️ SECURITY & 2FA ---
-router.get("/2fa/status", get2FAStatus);
-router.post("/2fa/enable", enable2FA);
-router.post("/2fa/disable", disable2FA);
+router.get("/2fa/generate", auth, generate2FASecret);
+router.post("/2fa/enable", auth, enable2FA);
+router.post("/2fa/disable", auth, disable2FA);
+router.get("/2fa/status", auth, get2FAStatus);
 
 // --- 🚪 AUTH ACTION ---
 router.post("/logout", logout);

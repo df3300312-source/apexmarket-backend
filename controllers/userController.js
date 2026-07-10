@@ -1,5 +1,7 @@
 const db = require("../config/db");
 const bcrypt = require("bcryptjs");
+const speakeasy = require("speakeasy");
+const QRCode = require("qrcode");
 
 exports.getDashboardOverview = async (req, res) => {
   try {
@@ -304,33 +306,6 @@ exports.updateNotifications = async (req, res) => {
   }
 };
 
-// ========== TWO-FACTOR AUTH (mock – replace with real TOTP later) ==========
-exports.get2FAStatus = async (req, res) => {
-  const [rows] = await db.query(
-    "SELECT two_factor_enabled FROM users WHERE id = ?",
-    [req.user.id],
-  );
-  res.json({ enabled: rows[0]?.two_factor_enabled === 1 });
-};
-
-exports.enable2FA = async (req, res) => {
-  const { code } = req.body;
-  // In a real implementation, verify TOTP code here
-  if (!code || code.length !== 6)
-    return res.status(400).json({ message: "Invalid code" });
-  await db.query("UPDATE users SET two_factor_enabled = 1 WHERE id = ?", [
-    req.user.id,
-  ]);
-  res.json({ message: "2FA enabled" });
-};
-
-exports.disable2FA = async (req, res) => {
-  await db.query("UPDATE users SET two_factor_enabled = 0 WHERE id = ?", [
-    req.user.id,
-  ]);
-  res.json({ message: "2FA disabled" });
-};
-// ========== AUTH / LOGOUT ==========
 exports.logout = (req, res) => {
   // Clear the cookie by setting its expiry to a past date
   res.cookie("token", "loggedout", {
@@ -338,4 +313,62 @@ exports.logout = (req, res) => {
     httpOnly: true,
   });
   res.status(200).json({ status: "success", message: "User logged out" });
+};
+
+// Generate QR code for authenticator app
+exports.generate2FASecret = async (req, res) => {
+  try {
+    const secret = speakeasy.generateSecret({
+      name: `ApexMarkets:${req.user.email}`,
+      length: 20,
+    });
+    const qrCode = await QRCode.toDataURL(secret.otpauth_url);
+    res.json({
+      secret: secret.base32,
+      qrCode: qrCode,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to generate 2FA secret" });
+  }
+};
+
+// Enable 2FA (verify OTP and save secret)
+exports.enable2FA = async (req, res) => {
+  const { code, secret } = req.body;
+  if (!code || !secret) {
+    return res.status(400).json({ message: "Missing code or secret" });
+  }
+  const verified = speakeasy.totp.verify({
+    secret: secret,
+    encoding: "base32",
+    token: code,
+    window: 1, // allow 1 step drift
+  });
+  if (!verified) {
+    return res.status(400).json({ message: "Invalid verification code" });
+  }
+  await db.query(
+    "UPDATE users SET two_factor_secret = ?, two_factor_enabled = 1 WHERE id = ?",
+    [secret, req.user.id],
+  );
+  res.json({ message: "2FA enabled successfully" });
+};
+
+// Disable 2FA
+exports.disable2FA = async (req, res) => {
+  await db.query(
+    "UPDATE users SET two_factor_secret = NULL, two_factor_enabled = 0 WHERE id = ?",
+    [req.user.id],
+  );
+  res.json({ message: "2FA disabled" });
+};
+
+// Get 2FA status
+exports.get2FAStatus = async (req, res) => {
+  const [rows] = await db.query(
+    "SELECT two_factor_enabled FROM users WHERE id = ?",
+    [req.user.id],
+  );
+  res.json({ enabled: rows[0]?.two_factor_enabled === 1 });
 };
