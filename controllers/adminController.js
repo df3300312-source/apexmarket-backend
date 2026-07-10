@@ -1,5 +1,5 @@
-// controllers/adminController.js
 const db = require("../config/db"); // ✅ only once
+const { sendEmail } = require("../services/emailService");
 
 // Dashboard stats
 exports.getDashboardStats = async (req, res) => {
@@ -120,17 +120,16 @@ exports.getAllDeposits = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-// Approve deposit and start investment
-// Approve deposit, start investment, and pay referral commission
+
 exports.approveDeposit = async (req, res) => {
   const { id } = req.params;
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
 
-    // 1. Get deposit details and check if user has a referrer
+    // 1. Get deposit details, user info, and referrer
     const [depositRows] = await connection.query(
-      `SELECT d.user_id, d.amount, d.plan_id, u.referred_by 
+      `SELECT d.user_id, d.amount, d.plan_id, u.referred_by, u.email, u.name
        FROM deposits d 
        JOIN users u ON d.user_id = u.id 
        WHERE d.id = ? AND d.status = "pending"`,
@@ -192,18 +191,16 @@ exports.approveDeposit = async (req, res) => {
       ],
     );
 
-    // 7. REFERRAL COMMISSION LOGIC (New & Functioning)
+    // 7. REFERRAL COMMISSION LOGIC
     if (deposit.referred_by) {
-      const commissionPercent = 10; // You can change this to 5, 7, etc.
+      const commissionPercent = 10;
       const commissionAmount = (deposit.amount * commissionPercent) / 100;
 
-      // A. Credit the Referrer's balance
       await connection.query(
         "UPDATE users SET balance = balance + ? WHERE id = ?",
         [commissionAmount, deposit.referred_by],
       );
 
-      // B. Log Referrer's commission in transactions table
       await connection.query(
         `INSERT INTO transactions (user_id, type, amount, balance_after, description)
          VALUES (?, 'referral_commission', ?, (SELECT balance FROM users WHERE id = ?), ?)`,
@@ -215,7 +212,6 @@ exports.approveDeposit = async (req, res) => {
         ],
       );
 
-      // C. Update the Referrals tracking table
       await connection.query(
         `INSERT INTO referrals (referrer_id, referred_id, commission_earned, status) 
          VALUES (?, ?, ?, 'paid')`,
@@ -229,6 +225,27 @@ exports.approveDeposit = async (req, res) => {
 
     // 8. Commit everything
     await connection.commit();
+
+    // 9. 📧 Send deposit approval email to the user
+    try {
+      await sendEmail({
+        to: deposit.email,
+        subject: "Deposit Approved ✅",
+        html: `
+          <h2>Deposit Approved</h2>
+          <p><strong>Amount:</strong> $${deposit.amount.toFixed(2)}</p>
+          <p><strong>Plan:</strong> ${plan.name || "N/A"}</p>
+          <p><strong>ROI:</strong> ${plan.roi_percent}% daily</p>
+          <p><strong>Investment Duration:</strong> ${plan.duration_days} days</p>
+          <p>Your investment is now active. Daily profits will be credited to your account.</p>
+          <p>Thank you for choosing ApexMarkets.</p>
+        `,
+      });
+      console.log(`📧 Deposit approval email sent to ${deposit.email}`);
+    } catch (emailErr) {
+      console.error("❌ Deposit approval email failed:", emailErr);
+    }
+
     res.json({
       message:
         "Deposit approved, investment active, and referral commission paid.",
@@ -243,19 +260,51 @@ exports.approveDeposit = async (req, res) => {
   }
 };
 
-// Reject deposit
 exports.rejectDeposit = async (req, res) => {
   const { id } = req.params;
+  const { reason } = req.body; // optional reason from admin
   try {
-    const [result] = await db.query(
-      'UPDATE deposits SET status = "rejected" WHERE id = ? AND status = "pending"',
+    // 1. Get deposit details before updating
+    const [depositRows] = await db.query(
+      `SELECT d.user_id, d.amount, u.email, u.name 
+       FROM deposits d 
+       JOIN users u ON d.user_id = u.id 
+       WHERE d.id = ? AND d.status = "pending"`,
       [id],
     );
-    if (result.affectedRows === 0) {
+
+    if (depositRows.length === 0) {
       return res
         .status(404)
         .json({ message: "Deposit not found or already processed" });
     }
+
+    const deposit = depositRows[0];
+
+    // 2. Update deposit status to rejected
+    await db.query(
+      'UPDATE deposits SET status = "rejected" WHERE id = ? AND status = "pending"',
+      [id],
+    );
+
+    // 3. 📧 Send rejection email
+    try {
+      await sendEmail({
+        to: deposit.email,
+        subject: "Deposit Rejected ❌",
+        html: `
+          <h2>Deposit Rejected</h2>
+          <p><strong>Amount:</strong> $${deposit.amount.toFixed(2)}</p>
+          <p><strong>Status:</strong> Rejected</p>
+          ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ""}
+          <p>If you have any questions, please contact our support team.</p>
+        `,
+      });
+      console.log(`📧 Deposit rejection email sent to ${deposit.email}`);
+    } catch (emailErr) {
+      console.error("❌ Deposit rejection email failed:", emailErr);
+    }
+
     res.json({ message: "Deposit rejected" });
   } catch (err) {
     console.error("Error in rejectDeposit:", err);

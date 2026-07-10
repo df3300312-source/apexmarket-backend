@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
 const { generateReferralCode, isValidEmail } = require("../utils/helpers");
+const { sendEmail } = require("../services/emailService");
 
 // Helper: Sign JWT token
 const signToken = (id) => {
@@ -109,6 +110,26 @@ exports.register = async (req, res) => {
     );
 
     await connection.commit();
+
+    // --- ADDED EMAIL SNIPPET ---
+    try {
+      await sendEmail({
+        to: email,
+        subject: "Welcome to ApexMarkets! 🚀",
+        html: `
+          <h1>Welcome ${name}!</h1>
+          <p>Thank you for joining ApexMarkets. Your investment journey starts now.</p>
+          <p>Get started by making your first deposit.</p>
+          <a href="${process.env.FRONTEND_URL}/deposit">Deposit Now</a>
+        `,
+      });
+    } catch (emailErr) {
+      // We log the error but don't stop the registration process
+      // because the user is already saved in the DB at this point.
+      console.error("Welcome email failed to send:", emailErr);
+    }
+    // ---------------------------
+
     sendToken(userRows[0], 201, res);
   } catch (err) {
     await connection.rollback();

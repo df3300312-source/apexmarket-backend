@@ -1,6 +1,7 @@
 const db = require("../config/db");
 const axios = require("axios");
 const { generateTransactionId } = require("../utils/helpers");
+const { sendEmail } = require("../services/emailService");
 
 // @desc    Initiate a new deposit
 exports.createDeposit = async (req, res) => {
@@ -15,16 +16,21 @@ exports.createDeposit = async (req, res) => {
     );
     const depositId = result.insertId;
 
+    // --- FETCH PLAN NAME FOR THE EMAIL ---
+    const [planRows] = await db.query("SELECT name FROM plans WHERE id = ?", [
+      planId,
+    ]);
+    const planName = planRows.length > 0 ? planRows[0].name : "Investment Plan";
+
     // 2. Call the Payment Gateway (Example: NowPayments)
-    // You will need an API KEY from NowPayments.io
     const response = await axios.post(
       "https://api.nowpayments.io/v1/invoice",
       {
         price_amount: amount,
         price_currency: "usd",
-        order_id: depositId, // We send our internal ID so we can find it later
+        order_id: depositId,
         order_description: `Investment Plan Deposit`,
-        ipn_callback_url: `${process.env.BACKEND_URL}/api/webhooks/nowpayments`, // Your Webhook
+        ipn_callback_url: `${process.env.BACKEND_URL}/api/webhooks/nowpayments`,
         success_url: `${process.env.FRONTEND_URL}/dashboard`,
         cancel_url: `${process.env.FRONTEND_URL}/deposit`,
       },
@@ -32,6 +38,25 @@ exports.createDeposit = async (req, res) => {
         headers: { "x-api-key": process.env.NOWPAYMENTS_API_KEY },
       },
     );
+
+    // --- ADDED EMAIL SNIPPET ---
+    try {
+      await sendEmail({
+        to: req.user.email,
+        subject: "Deposit Request Received",
+        html: `
+          <h2>Deposit Initiated</h2>
+          <p>Amount: $${amount}</p>
+          <p>Plan: ${planName}</p>
+          <p>Status: Pending confirmation</p>
+          <p>You will receive a confirmation once the deposit is approved.</p>
+        `,
+      });
+    } catch (emailErr) {
+      // Log error but don't block the user from seeing the payment page
+      console.error("Deposit notification email failed:", emailErr);
+    }
+    // ---------------------------
 
     // 3. Send the Gateway URL to the frontend
     res.json({

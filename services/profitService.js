@@ -1,5 +1,6 @@
 const cron = require("node-cron");
 const db = require("../config/db");
+const { sendEmail } = require("./emailService"); // 👈 import email service
 
 /**
  * processDailyProfits
@@ -13,10 +14,11 @@ const processDailyProfits = async () => {
   let totalPayout = 0;
 
   try {
-    // 1. Find all active investments that haven't been paid today
+    // 1. Find all active investments that haven't been paid today, JOIN users to get email
     const [activeInvestments] = await db.query(
-      `SELECT ui.* 
+      `SELECT ui.*, u.email, u.name 
        FROM user_investments ui 
+       JOIN users u ON ui.user_id = u.id
        WHERE ui.status = 'active' 
          AND (ui.last_profit_date < CURDATE() OR ui.last_profit_date IS NULL)`,
     );
@@ -80,6 +82,27 @@ const processDailyProfits = async () => {
         await connection.commit();
         processedCount++;
         totalPayout += parseFloat(dailyProfit);
+
+        // 8. 📧 Send daily profit email notification to the user
+        try {
+          await sendEmail({
+            to: inv.email,
+            subject: "Daily Profit Credited 🎉",
+            html: `
+              <h2>Your daily profit has been credited!</h2>
+              <p><strong>Amount:</strong> $${parseFloat(dailyProfit).toFixed(2)}</p>
+              <p><strong>New Balance:</strong> $${user.balance.toFixed(2)}</p>
+              <p>Thank you for investing with ApexMarkets. Your returns are growing daily.</p>
+            `,
+          });
+          console.log(`📧 Daily profit email sent to ${inv.email}`);
+        } catch (emailErr) {
+          // Log error but don't stop the profit processing
+          console.error(
+            `❌ Failed to send profit email to ${inv.email}:`,
+            emailErr.message,
+          );
+        }
       } catch (err) {
         await connection.rollback();
         console.error(

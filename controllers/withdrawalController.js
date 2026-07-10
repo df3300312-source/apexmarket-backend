@@ -1,4 +1,5 @@
 const db = require("../config/db");
+const { sendEmail } = require("../services/emailService"); // 👈 import email service
 
 // Helper to get total pending withdrawal amount for a user
 const getPendingWithdrawalTotal = async (userId) => {
@@ -59,6 +60,25 @@ exports.createWithdrawal = async (req, res) => {
       [userId, amountNum, method.toUpperCase(), address],
     );
 
+    // 7. 📧 Send email notification to the user
+    try {
+      await sendEmail({
+        to: req.user.email,
+        subject: "Withdrawal Request Received",
+        html: `
+          <h2>Withdrawal Request Submitted</h2>
+          <p><strong>Amount:</strong> $${amountNum.toFixed(2)}</p>
+          <p><strong>Method:</strong> ${method.toUpperCase()}</p>
+          <p><strong>Status:</strong> Pending</p>
+          <p>Your withdrawal request is now pending admin verification. You will receive another email once it is processed.</p>
+          <p>If you did not request this withdrawal, please contact support immediately.</p>
+        `,
+      });
+    } catch (emailErr) {
+      // Log error but don't block the response
+      console.error("❌ Withdrawal email notification failed:", emailErr);
+    }
+
     res.status(201).json({
       status: "success",
       id: result.insertId,
@@ -72,6 +92,7 @@ exports.createWithdrawal = async (req, res) => {
       .json({ message: "Server error while processing withdrawal" });
   }
 };
+
 // User gets their own withdrawal history
 exports.getUserWithdrawals = async (req, res) => {
   try {
