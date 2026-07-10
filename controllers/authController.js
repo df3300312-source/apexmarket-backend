@@ -174,16 +174,11 @@ exports.getProfile = async (req, res) => {
 
 exports.verifyEmail = async (req, res) => {
   const { token } = req.query;
-  console.log("🔐 Verification request with token:", token);
-
   if (!token) {
-    return res.redirect(
-      `${process.env.FRONTEND_URL}/login?error=missing_token`,
-    );
+    return res.status(400).json({ message: "Missing verification token" });
   }
 
   try {
-    // Check if token exists and is not expired
     const [rows] = await db.query(
       `SELECT id FROM users 
        WHERE verification_token = ? 
@@ -192,28 +187,21 @@ exports.verifyEmail = async (req, res) => {
       [token],
     );
     if (rows.length === 0) {
-      console.log("❌ Invalid or expired token");
-      return res.redirect(
-        `${process.env.FRONTEND_URL}/login?error=invalid_or_expired_token`,
-      );
+      return res.status(400).json({ message: "Invalid or expired token" });
     }
     const userId = rows[0].id;
 
-    // Update user to verified
     await db.query(
       "UPDATE users SET is_verified = TRUE, verification_token = NULL, verification_token_expiry = NULL WHERE id = ?",
       [userId],
     );
-    console.log("✅ User verified:", userId);
 
-    // Redirect to login with success parameter
-    res.redirect(`${process.env.FRONTEND_URL}/login?verified=true`);
+    res.json({ message: "Email verified successfully" });
   } catch (err) {
-    console.error("❌ Verification error:", err);
-    res.redirect(`${process.env.FRONTEND_URL}/login?error=server_error`);
+    console.error("Verification error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 };
-
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
   console.log("🔐 Forgot password request for:", email);
