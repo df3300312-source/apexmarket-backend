@@ -37,106 +37,68 @@ const sendToken = (user, statusCode, res) => {
 // Register a new user
 exports.register = async (req, res) => {
   const { name, email, password, referral } = req.body;
-
-  // 1. Validation
-  if (!isValidEmail(email)) {
-    return res
-      .status(400)
-      .json({ message: "Please provide a valid email address." });
-  }
-  if (!name || !password || password.length < 6) {
-    return res.status(400).json({
-      message: "Please provide all details. Password must be at least 6 chars.",
-    });
-  }
-
-  const connection = await db.getConnection();
-
   try {
-    await connection.beginTransaction();
-
-    // 2. Check if user exists
-    const [existing] = await connection.query(
-      "SELECT id FROM users WHERE email = ?",
-      [email],
-    );
-    if (existing.length > 0) {
-      await connection.rollback();
+    // Check if user exists
+    const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
+      email,
+    ]);
+    if (existing.length > 0)
       return res.status(400).json({ message: "Email already registered" });
-    }
 
-    // 3. Hash password & Generate professional Referral Code
-    const hashedPassword = await bcrypt.hash(password, 12);
-    const myReferralCode = generateReferralCode(); // Using your helper!
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 4. Insert user
-    const [result] = await connection.query(
-      "INSERT INTO users (name, email, password, referral_code) VALUES (?, ?, ?, ?)",
-      [name, email, hashedPassword, myReferralCode],
+    // Generate referral code and verification token
+    const referralCode = Math.random()
+      .toString(36)
+      .substring(2, 8)
+      .toUpperCase();
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+
+    // Insert user (is_verified defaults to false)
+    const [result] = await db.query(
+      `INSERT INTO users (name, email, password, referral_code, verification_token)
+       VALUES (?, ?, ?, ?, ?)`,
+      [name, email, hashedPassword, referralCode, verificationToken],
     );
     const userId = result.insertId;
 
-    // 5. Initialize User Settings (Notifications)
-    await connection.query("INSERT INTO user_settings (user_id) VALUES (?)", [
-      userId,
-    ]);
-
-    // 6. Handle Referral logic (If this new user was invited by someone)
+    // Handle referral if provided
     if (referral) {
-      const [refUser] = await connection.query(
+      const [refUser] = await db.query(
         "SELECT id FROM users WHERE referral_code = ?",
         [referral],
       );
-
       if (refUser.length > 0) {
-        const referrerId = refUser[0].id;
-        await connection.query(
-          "UPDATE users SET referred_by = ? WHERE id = ?",
-          [referrerId, userId],
-        );
-
-        // Track the referral in the tracking table
-        await connection.query(
-          "INSERT INTO referrals (referrer_id, referred_id, status) VALUES (?, ?, 'pending')",
-          [referrerId, userId],
-        );
+        await db.query("UPDATE users SET referred_by = ? WHERE id = ?", [
+          refUser[0].id,
+          userId,
+        ]);
       }
     }
 
-    // 7. Fetch the final user object
-    const [userRows] = await connection.query(
-      "SELECT id, name, email, role, balance, referral_code FROM users WHERE id = ?",
-      [userId],
-    );
+    // 📧 Send verification email
+    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+    await sendEmail({
+      to: email,
+      subject: "Verify Your ApexMarkets Account",
+      html: `
+        <h2>Welcome to ApexMarkets!</h2>
+        <p>Hi ${name},</p>
+        <p>Please click the link below to verify your email address and activate your account:</p>
+        <a href="${verificationLink}" style="display:inline-block;padding:12px 24px;background:#8a2be2;color:#fff;text-decoration:none;border-radius:4px;">Verify Email</a>
+        <p>If you didn't create this account, you can safely ignore this email.</p>
+        <p>This link will expire in 24 hours.</p>
+      `,
+    });
 
-    await connection.commit();
-
-    // --- ADDED EMAIL SNIPPET ---
-    try {
-      await sendEmail({
-        to: email,
-        subject: "Welcome to ApexMarkets! 🚀",
-        html: `
-          <h1>Welcome ${name}!</h1>
-          <p>Thank you for joining ApexMarkets. Your investment journey starts now.</p>
-          <p>Get started by making your first deposit.</p>
-          <a href="${process.env.FRONTEND_URL}/deposit">Deposit Now</a>
-        `,
-      });
-    } catch (emailErr) {
-      // We log the error but don't stop the registration process
-      // because the user is already saved in the DB at this point.
-      console.error("Welcome email failed to send:", emailErr);
-    }
-    // ---------------------------
-
-    sendToken(userRows[0], 201, res);
+    res.status(201).json({
+      message:
+        "Registration successful. A verification email has been sent to your address. Please verify before logging in.",
+    });
   } catch (err) {
-    await connection.rollback();
-    console.error("Registration Error:", err);
-    res.status(500).json({ message: "Server error during registration" });
-  } finally {
-    connection.release();
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -145,10 +107,15 @@ exports.login = async (req, res) => {
   const { email, password } = req.body;
   try {
     const [users] = await db.query(
-      "SELECT id, name, email, password, role, balance, referral_code FROM users WHERE email = ?",
+      "SELECT id, name, email, password, role, balance, is_verified FROM users WHERE email = ?",
       [email],
     );
-
+    if (!user.is_verified) {
+      return res.status(403).json({
+        message:
+          "Please verify your email first. A verification link was sent to your email.",
+      });
+    }
     if (users.length === 0) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -181,4 +148,34 @@ exports.logout = (req, res) => {
 // Get profile (protected)
 exports.getProfile = async (req, res) => {
   res.json(req.user);
+};
+
+exports.verifyEmail = async (req, res) => {
+  const { token } = req.query;
+  if (!token) {
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/login?error=missing_token`,
+    );
+  }
+
+  try {
+    const [rows] = await db.query(
+      "SELECT id FROM users WHERE verification_token = ? AND is_verified = FALSE",
+      [token],
+    );
+    if (rows.length === 0) {
+      return res.redirect(
+        `${process.env.FRONTEND_URL}/login?error=invalid_or_expired_token`,
+      );
+    }
+    const userId = rows[0].id;
+    await db.query(
+      "UPDATE users SET is_verified = TRUE, verification_token = NULL WHERE id = ?",
+      [userId],
+    );
+    res.redirect(`${process.env.FRONTEND_URL}/login?verified=true`);
+  } catch (err) {
+    console.error(err);
+    res.redirect(`${process.env.FRONTEND_URL}/login?error=server_error`);
+  }
 };
