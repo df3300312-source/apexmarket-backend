@@ -111,23 +111,30 @@ exports.login = async (req, res) => {
       "SELECT id, name, email, password, role, balance, is_verified FROM users WHERE email = ?",
       [email],
     );
+
+    // ✅ First, check if user exists
+    if (users.length === 0) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // ✅ Now define user
+    const user = users[0];
+
+    // ✅ Check if email is verified
     if (!user.is_verified) {
       return res.status(403).json({
         message:
           "Please verify your email first. A verification link was sent to your email.",
       });
     }
-    if (users.length === 0) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
 
-    const user = users[0];
+    // ✅ Verify password
     const isMatch = await bcrypt.compare(password, user.password);
-
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // ✅ Send token (make sure sendToken is defined)
     sendToken(user, 200, res);
   } catch (err) {
     console.error("Login Error:", err);
