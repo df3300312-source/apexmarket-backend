@@ -1,5 +1,5 @@
 const axios = require("axios");
-
+require("dotenv").config();
 const sendEmail = async ({ to, subject, html, text }) => {
   try {
     const response = await axios.post(
