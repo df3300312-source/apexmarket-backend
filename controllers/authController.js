@@ -174,6 +174,8 @@ exports.getProfile = async (req, res) => {
 
 exports.verifyEmail = async (req, res) => {
   const { token } = req.query;
+  console.log("🔐 Verification request with token:", token);
+
   if (!token) {
     return res.redirect(
       `${process.env.FRONTEND_URL}/login?error=missing_token`,
@@ -181,23 +183,33 @@ exports.verifyEmail = async (req, res) => {
   }
 
   try {
+    // Check if token exists and is not expired
     const [rows] = await db.query(
-      "SELECT id FROM users WHERE verification_token = ? AND is_verified = FALSE AND verification_token_expiry > NOW()",
+      `SELECT id FROM users 
+       WHERE verification_token = ? 
+       AND is_verified = FALSE 
+       AND verification_token_expiry > NOW()`,
       [token],
     );
     if (rows.length === 0) {
+      console.log("❌ Invalid or expired token");
       return res.redirect(
         `${process.env.FRONTEND_URL}/login?error=invalid_or_expired_token`,
       );
     }
     const userId = rows[0].id;
+
+    // Update user to verified
     await db.query(
-      "UPDATE users SET is_verified = TRUE, verification_token = NULL WHERE id = ?",
+      "UPDATE users SET is_verified = TRUE, verification_token = NULL, verification_token_expiry = NULL WHERE id = ?",
       [userId],
     );
+    console.log("✅ User verified:", userId);
+
+    // Redirect to login with success parameter
     res.redirect(`${process.env.FRONTEND_URL}/login?verified=true`);
   } catch (err) {
-    console.error(err);
+    console.error("❌ Verification error:", err);
     res.redirect(`${process.env.FRONTEND_URL}/login?error=server_error`);
   }
 };
