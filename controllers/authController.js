@@ -39,32 +39,34 @@ const sendToken = (user, statusCode, res) => {
 exports.register = async (req, res) => {
   const { name, email, password, referral } = req.body;
   try {
+    console.log("📝 Registration attempt for:", email);
+
     // Check if user exists
     const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [
       email,
     ]);
-    if (existing.length > 0)
+    if (existing.length > 0) {
+      console.log("❌ Email already registered:", email);
       return res.status(400).json({ message: "Email already registered" });
+    }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Generate referral code and verification token
     const referralCode = Math.random()
       .toString(36)
       .substring(2, 8)
       .toUpperCase();
     const verificationToken = crypto.randomBytes(32).toString("hex");
 
-    // Insert user (is_verified defaults to false)
+    // Insert user
     const [result] = await db.query(
-      `INSERT INTO users (name, email, password, referral_code, verification_token)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO users (name, email, password, referral_code, verification_token, is_verified)
+       VALUES (?, ?, ?, ?, ?, FALSE)`,
       [name, email, hashedPassword, referralCode, verificationToken],
     );
     const userId = result.insertId;
 
-    // Handle referral if provided
+    // Handle referral
     if (referral) {
       const [refUser] = await db.query(
         "SELECT id FROM users WHERE referral_code = ?",
@@ -78,8 +80,12 @@ exports.register = async (req, res) => {
       }
     }
 
-    // 📧 Send verification email
+    // Build verification link
     const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+    console.log("🔗 Verification link:", verificationLink);
+
+    // Send email
+    console.log("📧 Attempting to send verification email to:", email);
     await sendEmail({
       to: email,
       subject: "Verify Your ApexMarkets Account",
@@ -88,17 +94,17 @@ exports.register = async (req, res) => {
         <p>Hi ${name},</p>
         <p>Please click the link below to verify your email address and activate your account:</p>
         <a href="${verificationLink}" style="display:inline-block;padding:12px 24px;background:#8a2be2;color:#fff;text-decoration:none;border-radius:4px;">Verify Email</a>
-        <p>If you didn't create this account, you can safely ignore this email.</p>
         <p>This link will expire in 24 hours.</p>
+        <p>If you didn't create this account, please ignore this email.</p>
       `,
     });
+    console.log("✅ Verification email sent to:", email);
 
     res.status(201).json({
-      message:
-        "Registration successful. A verification email has been sent to your address. Please verify before logging in.",
+      message: "Registration successful. A verification email has been sent.",
     });
   } catch (err) {
-    console.error(err);
+    console.error("❌ Registration error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -190,7 +196,7 @@ exports.verifyEmail = async (req, res) => {
 
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
-  console.log("🔐 Forgot password request for:", email); // ✅ ADD THIS
+  console.log("🔐 Forgot password request for:", email);
 
   try {
     const [rows] = await db.query(
@@ -198,15 +204,13 @@ exports.forgotPassword = async (req, res) => {
       [email],
     );
     if (rows.length === 0) {
-      console.log("❌ Email not found:", email); // ✅ ADD THIS
+      console.log("❌ Email not found:", email);
       return res
         .status(404)
         .json({ message: "No account found with that email" });
     }
     const user = rows[0];
-    console.log("✅ User found:", user.email); // ✅ ADD THIS
 
-    // Generate reset token (valid for 1 hour)
     const resetToken = crypto.randomBytes(32).toString("hex");
     const resetExpiry = new Date(Date.now() + 3600000);
 
@@ -214,13 +218,12 @@ exports.forgotPassword = async (req, res) => {
       "UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?",
       [resetToken, resetExpiry, user.id],
     );
-    console.log("✅ Token stored for user:", user.id); // ✅ ADD THIS
+    console.log("✅ Token stored for user:", user.id);
 
     const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-    console.log("🔗 Reset link:", resetLink); // ✅ ADD THIS
+    console.log("🔗 Reset link:", resetLink);
 
-    // Send email
-    console.log("📧 Attempting to send email to:", email); // ✅ ADD THIS
+    console.log("📧 Attempting to send reset email to:", email);
     await sendEmail({
       to: email,
       subject: "Reset Your ApexMarkets Password",
@@ -233,11 +236,11 @@ exports.forgotPassword = async (req, res) => {
         <p>If you didn't request this, please ignore this email.</p>
       `,
     });
-    console.log("✅ Email sent successfully to:", email); // ✅ ADD THIS
+    console.log("✅ Reset email sent to:", email);
 
     res.json({ message: "Password reset link sent to your email" });
   } catch (err) {
-    console.error("❌ Error in forgotPassword:", err); // ✅ ADD THIS
+    console.error("❌ Error in forgotPassword:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
