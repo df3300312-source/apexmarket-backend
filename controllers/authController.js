@@ -183,33 +183,37 @@ exports.verifyEmail = async (req, res) => {
 
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
+  console.log("🔐 Forgot password request for:", email); // ✅ ADD THIS
+
   try {
-    // Check if user exists
     const [rows] = await db.query(
       "SELECT id, name FROM users WHERE email = ?",
       [email],
     );
     if (rows.length === 0) {
+      console.log("❌ Email not found:", email); // ✅ ADD THIS
       return res
         .status(404)
         .json({ message: "No account found with that email" });
     }
     const user = rows[0];
+    console.log("✅ User found:", user.email); // ✅ ADD THIS
 
     // Generate reset token (valid for 1 hour)
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetExpiry = new Date(Date.now() + 3600000); // 1 hour
+    const resetExpiry = new Date(Date.now() + 3600000);
 
-    // Store token in DB
     await db.query(
       "UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?",
       [resetToken, resetExpiry, user.id],
     );
+    console.log("✅ Token stored for user:", user.id); // ✅ ADD THIS
 
-    // Build reset link (frontend route)
     const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+    console.log("🔗 Reset link:", resetLink); // ✅ ADD THIS
 
-    // Send email via Brevo
+    // Send email
+    console.log("📧 Attempting to send email to:", email); // ✅ ADD THIS
     await sendEmail({
       to: email,
       subject: "Reset Your ApexMarkets Password",
@@ -222,10 +226,11 @@ exports.forgotPassword = async (req, res) => {
         <p>If you didn't request this, please ignore this email.</p>
       `,
     });
+    console.log("✅ Email sent successfully to:", email); // ✅ ADD THIS
 
     res.json({ message: "Password reset link sent to your email" });
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error in forgotPassword:", err); // ✅ ADD THIS
     res.status(500).json({ message: "Server error" });
   }
 };
