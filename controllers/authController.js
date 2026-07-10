@@ -1,4 +1,5 @@
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
 const { generateReferralCode, isValidEmail } = require("../utils/helpers");
@@ -177,5 +178,83 @@ exports.verifyEmail = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.redirect(`${process.env.FRONTEND_URL}/login?error=server_error`);
+  }
+};
+
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body;
+  try {
+    // Check if user exists
+    const [rows] = await db.query(
+      "SELECT id, name FROM users WHERE email = ?",
+      [email],
+    );
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No account found with that email" });
+    }
+    const user = rows[0];
+
+    // Generate reset token (valid for 1 hour)
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetExpiry = new Date(Date.now() + 3600000); // 1 hour
+
+    // Store token in DB
+    await db.query(
+      "UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE id = ?",
+      [resetToken, resetExpiry, user.id],
+    );
+
+    // Build reset link (frontend route)
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    // Send email via Brevo
+    await sendEmail({
+      to: email,
+      subject: "Reset Your ApexMarkets Password",
+      html: `
+        <h2>Password Reset Request</h2>
+        <p>Hi ${user.name},</p>
+        <p>You requested to reset your password. Click the link below to set a new password:</p>
+        <a href="${resetLink}" style="display:inline-block;padding:12px 24px;background:#8a2be2;color:#fff;text-decoration:none;border-radius:4px;">Reset Password</a>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+      `,
+    });
+
+    res.json({ message: "Password reset link sent to your email" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.resetPassword = async (req, res) => {
+  const { token, newPassword } = req.body;
+  try {
+    // Validate token
+    const [rows] = await db.query(
+      "SELECT id FROM users WHERE reset_token = ? AND reset_token_expiry > NOW()",
+      [token],
+    );
+    if (rows.length === 0) {
+      return res.status(400).json({ message: "Invalid or expired token" });
+    }
+    const userId = rows[0].id;
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password and clear token
+    await db.query(
+      "UPDATE users SET password = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?",
+      [hashedPassword, userId],
+    );
+
+    res.json({ message: "Password reset successful. You can now log in." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 };

@@ -9,6 +9,8 @@ const {
   logout, // Added this
   getProfile,
   verifyEmail,
+  forgotPassword,
+  resetPassword,
 } = require("../controllers/authController");
 
 // Middleware
@@ -21,6 +23,8 @@ const { protect } = require("../middleware/auth");
 router.post("/register", register);
 router.post("/login", login);
 router.get("/verify-email", verifyEmail);
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
 
 /**
  * 🔒 PROTECTED ROUTES
