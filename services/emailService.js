@@ -1,30 +1,34 @@
-const SibApiV3Sdk = require("@getbrevo/brevo");
-
-const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-
-// ✅ Correct way to set API key
-apiInstance.setApiKey(
-  SibApiV3Sdk.TransactionalEmailsApiApiKeys.apiKey,
-  process.env.BREVO_API_KEY,
-);
+const axios = require("axios");
 
 const sendEmail = async ({ to, subject, html, text }) => {
   try {
-    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-    sendSmtpEmail.sender = {
-      name: "ApexMarkets",
-      email: process.env.EMAIL_FROM || "no-reply@apexmarkets.com",
-    };
-    sendSmtpEmail.to = [{ email: to }];
-    sendSmtpEmail.subject = subject;
-    sendSmtpEmail.htmlContent = html;
-    sendSmtpEmail.textContent = text || "";
+    const response = await axios.post(
+      "https://api.brevo.com/v3/smtp/email",
+      {
+        sender: {
+          name: "ApexMarkets",
+          email: process.env.EMAIL_FROM || "no-reply@apexmarkets.com",
+        },
+        to: [{ email: to }],
+        subject: subject,
+        htmlContent: html,
+        textContent: text || "",
+      },
+      {
+        headers: {
+          "api-key": process.env.BREVO_API_KEY,
+          "Content-Type": "application/json",
+        },
+      },
+    );
 
-    const response = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log(`✅ Email sent to ${to}: ${response.messageId}`);
-    return response;
+    console.log(`✅ Email sent to ${to}: ${response.data.messageId}`);
+    return response.data;
   } catch (error) {
-    console.error("❌ Email sending failed:", error);
+    console.error(
+      "❌ Email sending failed:",
+      error.response?.data || error.message,
+    );
     throw error;
   }
 };
