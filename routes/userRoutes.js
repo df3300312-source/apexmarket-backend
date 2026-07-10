@@ -6,7 +6,7 @@ const { protect } = require("../middleware/auth");
 
 // Controllers
 const {
-  getDashboardOverview, // Optimized single-call for stats
+  getDashboardOverview,
   getProfile,
   getBalance,
   getReferrals,
@@ -32,9 +32,7 @@ const {
 router.use(protect);
 
 // --- 📊 DASHBOARD & STATS ---
-// This is the main route your React Dashboard will call on load
 router.get("/overview", getDashboardOverview);
-
 router.get("/balance", getBalance);
 router.get("/active-investments", getActiveInvestments);
 router.get("/total-earned", getTotalEarned);
@@ -53,11 +51,11 @@ router.put("/password", changePassword);
 router.get("/notifications", getNotifications);
 router.put("/notifications", updateNotifications);
 
-// --- 🛡️ SECURITY & 2FA ---
-router.get("/2fa/generate", auth, generate2FASecret);
-router.post("/2fa/enable", auth, enable2FA);
-router.post("/2fa/disable", auth, disable2FA);
-router.get("/2fa/status", auth, get2FAStatus);
+// --- 🛡️ SECURITY & 2FA (no extra auth needed – already protected by router.use) ---
+router.get("/2fa/generate", generate2FASecret);
+router.post("/2fa/enable", enable2FA);
+router.post("/2fa/disable", disable2FA);
+router.get("/2fa/status", get2FAStatus);
 
 // --- 🚪 AUTH ACTION ---
 router.post("/logout", logout);
